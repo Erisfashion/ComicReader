@@ -5,6 +5,7 @@ import android.content.ContentValues;
 import android.content.DialogInterface;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
+import android.graphics.Color;
 import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
 import android.text.TextUtils;
@@ -15,6 +16,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import com.google.gson.JsonArray;
@@ -46,8 +48,9 @@ import okhttp3.Response;
 public class MainActivity extends AppCompatActivity {
     private DatabaseHelper dbHelper;
     private OkHttpClient client;
-    private ArrayList<String> searchResults;
+    private ArrayList<String> displayList;
     private ArrayAdapter<String> adapter;
+    private TextView tvStatus;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -55,32 +58,41 @@ public class MainActivity extends AppCompatActivity {
 
         dbHelper = new DatabaseHelper(this);
         client = new OkHttpClient();
-        searchResults = new ArrayList<>();
+        displayList = new ArrayList<>();
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(20, 20, 20, 20);
 
+        // 顶部操作栏
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
 
         Button btnImport = new Button(this);
-        btnImport.setText("导入图源(文本/密文/路径/链接)");
+        btnImport.setText("导入图源");
         btnImport.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button btnClear = new Button(this);
-        btnClear.setText("清空所有图源");
+        btnClear.setText("清空图源");
         btnClear.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         topBar.addView(btnImport);
         topBar.addView(btnClear);
         root.addView(topBar);
 
+        // 图源状态提示栏（导入后立刻发生视觉变化）
+        tvStatus = new TextView(this);
+        tvStatus.setTextSize(15);
+        tvStatus.setTextColor(Color.DKGRAY);
+        tvStatus.setPadding(10, 15, 10, 15);
+        root.addView(tvStatus);
+
+        // 搜索栏
         LinearLayout searchBar = new LinearLayout(this);
         searchBar.setOrientation(LinearLayout.HORIZONTAL);
 
         final EditText etKeyword = new EditText(this);
-        etKeyword.setHint("输入漫画名称全网搜索...");
+        etKeyword.setHint("输入漫画名全网搜索...");
         etKeyword.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button btnSearch = new Button(this);
@@ -90,12 +102,16 @@ public class MainActivity extends AppCompatActivity {
         searchBar.addView(btnSearch);
         root.addView(searchBar);
 
+        // 内容展示列表
         ListView listView = new ListView(this);
-        adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, searchResults);
+        adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, displayList);
         listView.setAdapter(adapter);
         root.addView(listView);
 
         setContentView(root);
+
+        // 初始化载入图源数据
+        refreshSourceList();
 
         btnImport.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -110,7 +126,8 @@ public class MainActivity extends AppCompatActivity {
                 SQLiteDatabase db = dbHelper.getWritableDatabase();
                 db.delete("sources", null, null);
                 db.close();
-                Toast.makeText(MainActivity.this, "已清空本地所有图源！", Toast.LENGTH_SHORT).show();
+                Toast.makeText(MainActivity.this, "已清空所有图源！", Toast.LENGTH_SHORT).show();
+                refreshSourceList();
             }
         });
 
@@ -119,7 +136,7 @@ public class MainActivity extends AppCompatActivity {
             public void onClick(View v) {
                 String keyword = etKeyword.getText().toString().trim();
                 if (TextUtils.isEmpty(keyword)) {
-                    Toast.makeText(MainActivity.this, "请输入漫画名称", Toast.LENGTH_SHORT).show();
+                    refreshSourceList();
                     return;
                 }
                 searchComic(keyword);
@@ -127,9 +144,25 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    // 刷新显示本地所有已导入的图源
+    private void refreshSourceList() {
+        displayList.clear();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor cursor = db.rawQuery("SELECT name FROM sources", null);
+        int total = cursor.getCount();
+        tvStatus.setText("当前已导入图源: " + total + " 个 (下方为图源列表)");
+
+        while (cursor.moveToNext()) {
+            displayList.add("📌 [图源] " + cursor.getString(0));
+        }
+        cursor.close();
+        db.close();
+        adapter.notifyDataSetChanged();
+    }
+
     private void showImportDialog() {
         final EditText input = new EditText(this);
-        input.setHint("可粘贴图源密文(eNr...)、明文JSON、网络链接，或输入平板本地文件路径(如 /sdcard/Download/322.json)");
+        input.setHint("粘贴图源文本/密文，或输入文件路径(如 /sdcard/Download/322.json)");
         input.setMinLines(5);
 
         new AlertDialog.Builder(this)
@@ -174,7 +207,7 @@ public class MainActivity extends AppCompatActivity {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            Toast.makeText(MainActivity.this, "读取文件失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                            Toast.makeText(MainActivity.this, "文件读取失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
                         }
                     });
                 }
@@ -183,7 +216,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void fetchAndSaveSourceFromUrl(final String url) {
-        Toast.makeText(this, "正在从网络拉取...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "正在拉取网络规则...", Toast.LENGTH_SHORT).show();
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -205,7 +238,6 @@ public class MainActivity extends AppCompatActivity {
         }).start();
     }
 
-    // 核心自动解压引擎：处理异次元 eNr... (Base64+Zlib) 及 Gzip 格式
     private String tryDecompress(String raw) {
         if (raw == null) return "";
         String text = raw.trim();
@@ -216,7 +248,7 @@ public class MainActivity extends AppCompatActivity {
         try {
             byte[] data = Base64.decode(text, Base64.DEFAULT);
 
-            // 1. 解压标准 ZLIB / Deflate（异次元专有格式）
+            // Zlib/Deflate 解压缩
             try {
                 ByteArrayInputStream bais = new ByteArrayInputStream(data);
                 InflaterInputStream iis = new InflaterInputStream(bais);
@@ -233,7 +265,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             } catch (Exception ignored) {}
 
-            // 2. 解压 GZIP
+            // GZIP 解压缩
             try {
                 ByteArrayInputStream bais = new ByteArrayInputStream(data);
                 GZIPInputStream gis = new GZIPInputStream(bais);
@@ -254,7 +286,6 @@ public class MainActivity extends AppCompatActivity {
         return text;
     }
 
-    // 异步解析并在 SQLite 事务中秒级批量入库
     private void parseAndSaveSources(final String rawContent) {
         new Thread(new Runnable() {
             @Override
@@ -265,7 +296,7 @@ public class MainActivity extends AppCompatActivity {
 
                     int count = 0;
                     SQLiteDatabase db = dbHelper.getWritableDatabase();
-                    db.beginTransaction(); // 开启事务批量加速
+                    db.beginTransaction();
                     try {
                         if (element.isJsonArray()) {
                             JsonArray array = element.getAsJsonArray();
@@ -290,9 +321,10 @@ public class MainActivity extends AppCompatActivity {
                         @Override
                         public void run() {
                             if (total > 0) {
-                                Toast.makeText(MainActivity.this, "成功解析并导入 " + total + " 个图源！", Toast.LENGTH_LONG).show();
+                                Toast.makeText(MainActivity.this, "导入成功！共写入 " + total + " 个图源", Toast.LENGTH_SHORT).show();
+                                refreshSourceList();
                             } else {
-                                Toast.makeText(MainActivity.this, "未找到有效的图源规则，请检查内容", Toast.LENGTH_LONG).show();
+                                Toast.makeText(MainActivity.this, "未检测到图源数据", Toast.LENGTH_LONG).show();
                             }
                         }
                     });
@@ -300,7 +332,7 @@ public class MainActivity extends AppCompatActivity {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            Toast.makeText(MainActivity.this, "图源解析失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                            Toast.makeText(MainActivity.this, "解析失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
                         }
                     });
                 }
@@ -324,9 +356,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void searchComic(final String keyword) {
-        searchResults.clear();
+        displayList.clear();
         adapter.notifyDataSetChanged();
-        Toast.makeText(this, "正在检索图源中...", Toast.LENGTH_SHORT).show();
+        tvStatus.setText("正在搜索【" + keyword + "】中...");
 
         new Thread(new Runnable() {
             @Override
@@ -337,7 +369,7 @@ public class MainActivity extends AppCompatActivity {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            Toast.makeText(MainActivity.this, "当前无图源，请先导入！", Toast.LENGTH_SHORT).show();
+                            tvStatus.setText("暂无图源，请先导入！");
                         }
                     });
                     cursor.close();
@@ -387,11 +419,11 @@ public class MainActivity extends AppCompatActivity {
                                 for (Element item : items) {
                                     String title = TextUtils.isEmpty(nameRule) ? item.text() : item.select(nameRule).text();
                                     if (!TextUtils.isEmpty(title)) {
-                                        final String record = "【" + sourceName + "】 " + title;
+                                        final String record = "📖 " + title + "  (" + sourceName + ")";
                                         runOnUiThread(new Runnable() {
                                             @Override
                                             public void run() {
-                                                searchResults.add(record);
+                                                displayList.add(record);
                                                 adapter.notifyDataSetChanged();
                                             }
                                         });
@@ -403,6 +435,13 @@ public class MainActivity extends AppCompatActivity {
                 }
                 cursor.close();
                 db.close();
+
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        tvStatus.setText("搜索完毕！共找到 " + displayList.size() + " 条结果 (清空输入框点击搜索可返回图源列表)");
+                    }
+                });
             }
         }).start();
     }
