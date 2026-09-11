@@ -84,7 +84,7 @@ public class MainActivity extends AppCompatActivity {
         topBar.setOrientation(LinearLayout.HORIZONTAL);
 
         Button btnImport = new Button(this);
-        btnImport.setText("导入图源");
+        btnImport.setText("导入通用书源");
         btnImport.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button btnClear = new Button(this);
@@ -105,7 +105,7 @@ public class MainActivity extends AppCompatActivity {
         searchBar.setOrientation(LinearLayout.HORIZONTAL);
 
         final EditText etKeyword = new EditText(this);
-        etKeyword.setHint("输入漫画名进行搜索...");
+        etKeyword.setHint("输入漫画名进行全网搜索...");
         etKeyword.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button btnSearch = new Button(this);
@@ -137,7 +137,7 @@ public class MainActivity extends AppCompatActivity {
                 SQLiteDatabase db = dbHelper.getWritableDatabase();
                 db.delete("sources", null, null);
                 db.close();
-                Toast.makeText(MainActivity.this, "已清空所有图源！", Toast.LENGTH_SHORT).show();
+                Toast.makeText(MainActivity.this, "已清空所有书源！", Toast.LENGTH_SHORT).show();
                 refreshSourceList();
             }
         });
@@ -186,7 +186,7 @@ public class MainActivity extends AppCompatActivity {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         Cursor cursor = db.rawQuery("SELECT name FROM sources", null);
         int total = cursor.getCount();
-        tvStatus.setText("已导入图源: " + total + " 个 (下方为站点列表)");
+        tvStatus.setText("已加载书源: " + total + " 个");
 
         while (cursor.moveToNext()) {
             displayList.add("📌 " + cursor.getString(0));
@@ -198,11 +198,11 @@ public class MainActivity extends AppCompatActivity {
 
     private void showImportDialog() {
         final EditText input = new EditText(this);
-        input.setHint("粘贴图源密文、JSON或输入路径(/sdcard/Download/322.json)");
+        input.setHint("粘贴书源密文(eNr...)、JSON，或输入路径(/sdcard/Download/322.json)");
         input.setMinLines(5);
 
         new AlertDialog.Builder(this)
-                .setTitle("导入图源")
+                .setTitle("导入通用书源")
                 .setView(input)
                 .setPositiveButton("开始导入", new DialogInterface.OnClickListener() {
                     @Override
@@ -252,7 +252,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void fetchAndSaveSourceFromUrl(final String url) {
-        Toast.makeText(this, "正在从网络下载...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "正在下载...", Toast.LENGTH_SHORT).show();
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -266,7 +266,7 @@ public class MainActivity extends AppCompatActivity {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            Toast.makeText(MainActivity.this, "拉取失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                            Toast.makeText(MainActivity.this, "下载失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
                         }
                     });
                 }
@@ -355,10 +355,10 @@ public class MainActivity extends AppCompatActivity {
                         @Override
                         public void run() {
                             if (total > 0) {
-                                Toast.makeText(MainActivity.this, "成功导入 " + total + " 个图源！", Toast.LENGTH_SHORT).show();
+                                Toast.makeText(MainActivity.this, "成功导入 " + total + " 个书源！", Toast.LENGTH_SHORT).show();
                                 refreshSourceList();
                             } else {
-                                Toast.makeText(MainActivity.this, "未找到有效图源规则", Toast.LENGTH_LONG).show();
+                                Toast.makeText(MainActivity.this, "未检测到有效数据", Toast.LENGTH_LONG).show();
                             }
                         }
                     });
@@ -375,13 +375,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void saveSourceToDb(SQLiteDatabase db, JsonObject obj) {
-        String name = "未知图源";
+        String name = "未知书源";
         if (obj.has("bookSourceName")) {
             name = obj.get("bookSourceName").getAsString();
-        } else if (obj.has("bookSourceNamer")) {
-            name = obj.get("bookSourceNamer").getAsString();
-        } else if (obj.has("sourceName")) {
-            name = obj.get("sourceName").getAsString();
         } else if (obj.has("name")) {
             name = obj.get("name").getAsString();
         }
@@ -391,40 +387,27 @@ public class MainActivity extends AppCompatActivity {
         db.insert("sources", null, cv);
     }
 
-    // 异次元专有属性选择器转换，支持 class/id/tag/children 等结构转标准 CSS
-    private String convertRuleToCss(String rule) {
+    // 兼容 Legado / 异次元混合选择器清洗
+    private String cleanSelector(String rule) {
         if (TextUtils.isEmpty(rule)) return "";
-        String clean = rule;
-        
-        // 剥离属性取值指令
-        if (clean.contains("@text")) clean = clean.substring(0, clean.indexOf("@text"));
-        if (clean.contains("@href")) clean = clean.substring(0, clean.indexOf("@href"));
-        if (clean.contains("@src")) clean = clean.substring(0, clean.indexOf("@src"));
-
-        clean = clean.replace("class.", ".");
-        clean = clean.replace("id.", "#");
-        clean = clean.replace("tag.", "");
-        clean = clean.replace("children.", "> ");
-        clean = clean.replace("@", " ").trim();
-        return clean;
-    }
-
-    // 从图源 JSON 中容错提取指定字段
-    private String optString(JsonObject obj, String... keys) {
-        for (String key : keys) {
-            if (obj.has(key) && !obj.get(key).isJsonNull()) {
-                String val = obj.get(key).getAsString();
-                if (!TextUtils.isEmpty(val)) return val;
-            }
+        String r = rule;
+        // 去除尾部属性指令
+        int atIdx = r.indexOf("@");
+        if (atIdx != -1) {
+            r = r.substring(0, atIdx);
         }
-        return "";
+        r = r.replace("class.", ".");
+        r = r.replace("id.", "#");
+        r = r.replace("tag.", "");
+        r = r.replace("&&", " ");
+        return r.trim();
     }
 
     private void startConcurrentSearch(final String keyword) {
         if (searchExecutor != null && !searchExecutor.isShutdown()) {
             searchExecutor.shutdownNow();
         }
-        searchExecutor = Executors.newFixedThreadPool(8);
+        searchExecutor = Executors.newFixedThreadPool(6);
 
         displayList.clear();
         adapter.notifyDataSetChanged();
@@ -434,7 +417,7 @@ public class MainActivity extends AppCompatActivity {
         final int totalSources = cursor.getCount();
 
         if (totalSources == 0) {
-            tvStatus.setText("当前无图源，请先导入！");
+            tvStatus.setText("当前无书源，请先导入！");
             cursor.close();
             db.close();
             return;
@@ -448,7 +431,7 @@ public class MainActivity extends AppCompatActivity {
         db.close();
 
         final AtomicInteger finishedCounter = new AtomicInteger(0);
-        tvStatus.setText("正在跨站搜索【" + keyword + "】(0/" + totalSources + ")...");
+        tvStatus.setText("正在并发搜索【" + keyword + "】(0/" + totalSources + ")...");
 
         for (final String[] item : sourceItems) {
             final String sourceName = item[0];
@@ -460,37 +443,38 @@ public class MainActivity extends AppCompatActivity {
                     try {
                         JsonObject source = new JsonParser().parse(jsonStr).getAsJsonObject();
                         
-                        // 1. 全面容错获取 host / base 域名
-                        String baseUrl = optString(source, "bookSourceUrl", "sourceUrl", "host", "baseUrl", "url");
-                        // 2. 全面容错获取搜索路径与地址
-                        String searchUrl = optString(source, "searchUrl", "ruleSearchUrl");
+                        // 兼容 Legado 的 bookSourceUrl 与 searchUrl 拼装规则
+                        String baseUrl = "";
+                        if (source.has("bookSourceUrl")) baseUrl = source.get("bookSourceUrl").getAsString();
+
+                        String searchUrl = "";
+                        if (source.has("searchUrl")) searchUrl = source.get("searchUrl").getAsString();
 
                         if (!TextUtils.isEmpty(searchUrl)) {
                             String encodedKey = URLEncoder.encode(keyword, "UTF-8");
-                            String finalUrl;
-                            if (searchUrl.startsWith("http://") || searchUrl.startsWith("https://")) {
-                                finalUrl = searchUrl;
-                            } else {
-                                if (!baseUrl.endsWith("/") && !searchUrl.startsWith("/")) {
-                                    finalUrl = baseUrl + "/" + searchUrl;
-                                } else {
-                                    finalUrl = baseUrl + searchUrl;
-                                }
-                            }
+                            String finalUrl = searchUrl;
 
+                            // 处理 Legado 常见的 searchUrl 占位符格式 (如 /search?q={{key}} 或完整 URL)
                             if (finalUrl.contains("{{key}}")) {
                                 finalUrl = finalUrl.replace("{{key}}", encodedKey);
-                            } else if (finalUrl.contains("%s")) {
-                                finalUrl = finalUrl.replace("%s", encodedKey);
+                            } else if (finalUrl.contains("{key}")) {
+                                finalUrl = finalUrl.replace("{key}", encodedKey);
                             } else {
                                 finalUrl = finalUrl + encodedKey;
                             }
 
-                            // 过滤掉拼出来仍不合法的非法 URL
+                            if (!finalUrl.startsWith("http://") && !finalUrl.startsWith("https://")) {
+                                if (!baseUrl.endsWith("/") && !finalUrl.startsWith("/")) {
+                                    finalUrl = baseUrl + "/" + finalUrl;
+                                } else {
+                                    finalUrl = baseUrl + finalUrl;
+                                }
+                            }
+
                             if (finalUrl.startsWith("http://") || finalUrl.startsWith("https://")) {
                                 Request request = new Request.Builder()
                                         .url(finalUrl)
-                                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
+                                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
                                         .build();
 
                                 Response response = client.newCall(request).execute();
@@ -498,39 +482,34 @@ public class MainActivity extends AppCompatActivity {
                                     String html = response.body().string();
                                     Document doc = Jsoup.parse(html);
 
-                                    // 3. 兼容异次元新旧两代规则结构（根层级 / ruleSearch 嵌套）
-                                    String rawListRule = "";
-                                    String rawNameRule = "";
+                                    // 兼容 Legado 的 bookList / bookName 解析层级
+                                    String listRule = "";
+                                    String nameRule = "";
 
                                     if (source.has("ruleSearch") && source.get("ruleSearch").isJsonObject()) {
-                                        JsonObject ruleSearch = source.getAsJsonObject("ruleSearch");
-                                        rawListRule = optString(ruleSearch, "bookList", "itemList");
-                                        rawNameRule = optString(ruleSearch, "bookName", "name", "title");
-                                    }
-                                    if (TextUtils.isEmpty(rawListRule)) {
-                                        rawListRule = optString(source, "searchBookList", "bookList");
-                                        rawNameRule = optString(source, "searchBookName", "bookName");
+                                        JsonObject rs = source.getAsJsonObject("ruleSearch");
+                                        if (rs.has("bookList")) listRule = rs.get("bookList").getAsString();
+                                        if (rs.has("bookName")) nameRule = rs.get("bookName").getAsString();
                                     }
 
-                                    if (!TextUtils.isEmpty(rawListRule)) {
-                                        String cssList = convertRuleToCss(rawListRule);
-                                        String cssName = convertRuleToCss(rawNameRule);
+                                    if (!TextUtils.isEmpty(listRule)) {
+                                        String cssList = cleanSelector(listRule);
+                                        String cssName = cleanSelector(nameRule);
 
-                                        Elements bookElements = doc.select(cssList);
-                                        for (Element bookElem : bookElements) {
+                                        Elements elements = doc.select(cssList);
+                                        for (Element elem : elements) {
                                             String title = "";
                                             if (!TextUtils.isEmpty(cssName)) {
-                                                Element nameElem = bookElem.select(cssName).first();
+                                                Element nameElem = elem.select(cssName).first();
                                                 if (nameElem != null) title = nameElem.text();
                                             }
                                             if (TextUtils.isEmpty(title)) {
-                                                title = bookElem.text();
+                                                title = elem.text();
                                             }
 
-                                            // 过滤纯换行与长于40字的无关标签文本，提取纯净书名
                                             if (!TextUtils.isEmpty(title)) {
                                                 title = title.replaceAll("\\s+", " ").trim();
-                                                if (title.length() > 0 && title.length() < 40) {
+                                                if (title.length() > 0 && title.length() < 35) {
                                                     final String record = "📖 " + title + "  【" + sourceName + "】";
                                                     runOnUiThread(new Runnable() {
                                                         @Override
