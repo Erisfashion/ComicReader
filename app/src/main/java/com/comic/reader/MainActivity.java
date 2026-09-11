@@ -25,7 +25,6 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        // 创建一个简单的UI布局
         Button btn = new Button(this);
         btn.setText("点击导入测试异次元图源并测试网络解析");
         setContentView(btn);
@@ -42,7 +41,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void importAndTestSampleSource() {
-        // 模拟异次元标准 JSON 图源格式
         final String sampleJson = "{\n" +
                 "  \"bookSourceNamer\": \"示例漫画源\",\n" +
                 "  \"bookSourceUrl\": \"https://httpbin.org\",\n" +
@@ -54,7 +52,6 @@ public class MainActivity extends AppCompatActivity {
                 "  }\n" +
                 "}";
 
-        // 1. 存入 SQLite 数据库
         try {
             SQLiteDatabase db = dbHelper.getWritableDatabase();
             ContentValues cv = new ContentValues();
@@ -67,12 +64,10 @@ public class MainActivity extends AppCompatActivity {
             e.printStackTrace();
         }
 
-        // 2. 异步测试网络抓取与 Jsoup 规则解析（兼容 Android 4.2.2 线程策略）
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    // 解析异次元规则 JSON
                     JsonObject jsonObject = new JsonParser().parse(sampleJson).getAsJsonObject();
                     String targetUrl = jsonObject.get("bookSourceUrl").getAsString() + jsonObject.get("searchUrl").getAsString();
                     
@@ -95,7 +90,7 @@ public class MainActivity extends AppCompatActivity {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            Toast.makeText(MainActivity.this, "网络测试失败: " + e.getMessage(), Toast.LONG).show();
+                            Toast.makeText(MainActivity.this, "网络测试失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
                         }
                     });
                 }
