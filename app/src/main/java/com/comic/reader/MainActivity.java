@@ -8,6 +8,7 @@ import android.database.sqlite.SQLiteDatabase;
 import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
 import android.text.TextUtils;
+import android.util.Base64;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
@@ -26,9 +27,17 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.URLEncoder;
 import java.util.ArrayList;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.InflaterInputStream;
 
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -48,17 +57,15 @@ public class MainActivity extends AppCompatActivity {
         client = new OkHttpClient();
         searchResults = new ArrayList<>();
 
-        // 构建界面
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(20, 20, 20, 20);
 
-        // 顶部操作栏（导入图源按钮、清除图源按钮）
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
 
         Button btnImport = new Button(this);
-        btnImport.setText("导入图源(链接/文本)");
+        btnImport.setText("导入图源(文本/密文/路径/链接)");
         btnImport.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button btnClear = new Button(this);
@@ -69,12 +76,11 @@ public class MainActivity extends AppCompatActivity {
         topBar.addView(btnClear);
         root.addView(topBar);
 
-        // 搜索栏（输入框 + 搜索按钮）
         LinearLayout searchBar = new LinearLayout(this);
         searchBar.setOrientation(LinearLayout.HORIZONTAL);
 
         final EditText etKeyword = new EditText(this);
-        etKeyword.setHint("输入漫画名进行全网搜索...");
+        etKeyword.setHint("输入漫画名称全网搜索...");
         etKeyword.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button btnSearch = new Button(this);
@@ -84,7 +90,6 @@ public class MainActivity extends AppCompatActivity {
         searchBar.addView(btnSearch);
         root.addView(searchBar);
 
-        // 结果展示列表
         ListView listView = new ListView(this);
         adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, searchResults);
         listView.setAdapter(adapter);
@@ -92,7 +97,6 @@ public class MainActivity extends AppCompatActivity {
 
         setContentView(root);
 
-        // 事件绑定
         btnImport.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -106,7 +110,7 @@ public class MainActivity extends AppCompatActivity {
                 SQLiteDatabase db = dbHelper.getWritableDatabase();
                 db.delete("sources", null, null);
                 db.close();
-                Toast.makeText(MainActivity.this, "已清空本地所有图源", Toast.LENGTH_SHORT).show();
+                Toast.makeText(MainActivity.this, "已清空本地所有图源！", Toast.LENGTH_SHORT).show();
             }
         });
 
@@ -123,10 +127,9 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    // 弹出图源导入对话框（支持粘贴规则或输入订阅 URL）
     private void showImportDialog() {
         final EditText input = new EditText(this);
-        input.setHint("在此粘贴图源 JSON 内容，或输入图源的 http/https 网络地址");
+        input.setHint("可粘贴图源密文(eNr...)、明文JSON、网络链接，或输入平板本地文件路径(如 /sdcard/Download/322.json)");
         input.setMinLines(5);
 
         new AlertDialog.Builder(this)
@@ -140,6 +143,8 @@ public class MainActivity extends AppCompatActivity {
 
                         if (text.startsWith("http://") || text.startsWith("https://")) {
                             fetchAndSaveSourceFromUrl(text);
+                        } else if (new File(text).exists()) {
+                            loadFromFile(text);
                         } else {
                             parseAndSaveSources(text);
                         }
@@ -149,28 +154,27 @@ public class MainActivity extends AppCompatActivity {
                 .show();
     }
 
-    // 从网络地址拉取图源文本
-    private void fetchAndSaveSourceFromUrl(final String url) {
+    private void loadFromFile(final String filePath) {
+        Toast.makeText(this, "正在读取本地文件...", Toast.LENGTH_SHORT).show();
         new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    Request request = new Request.Builder().url(url).build();
-                    Response response = client.newCall(request).execute();
-                    if (response.body() != null) {
-                        final String jsonContent = response.body().string();
-                        runOnUiThread(new Runnable() {
-                            @Override
-                            public void run() {
-                                parseAndSaveSources(jsonContent);
-                            }
-                        });
+                    File file = new File(filePath);
+                    FileInputStream fis = new FileInputStream(file);
+                    BufferedReader br = new BufferedReader(new InputStreamReader(fis, "UTF-8"));
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        sb.append(line);
                     }
-                } catch (final IOException e) {
+                    br.close();
+                    parseAndSaveSources(sb.toString());
+                } catch (final Exception e) {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            Toast.makeText(MainActivity.this, "拉取失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                            Toast.makeText(MainActivity.this, "读取文件失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
                         }
                     });
                 }
@@ -178,30 +182,130 @@ public class MainActivity extends AppCompatActivity {
         }).start();
     }
 
-    // 解析并保存图源到 SQLite
-    private void parseAndSaveSources(String jsonContent) {
-        try {
-            int count = 0;
-            SQLiteDatabase db = dbHelper.getWritableDatabase();
-            JsonElement element = new JsonParser().parse(jsonContent);
-
-            if (element.isJsonArray()) {
-                JsonArray array = element.getAsJsonArray();
-                for (JsonElement item : array) {
-                    if (item.isJsonObject()) {
-                        saveSourceToDb(db, item.getAsJsonObject());
-                        count++;
+    private void fetchAndSaveSourceFromUrl(final String url) {
+        Toast.makeText(this, "正在从网络拉取...", Toast.LENGTH_SHORT).show();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Request request = new Request.Builder().url(url).build();
+                    Response response = client.newCall(request).execute();
+                    if (response.body() != null) {
+                        parseAndSaveSources(response.body().string());
                     }
+                } catch (final IOException e) {
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            Toast.makeText(MainActivity.this, "网络拉取失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        }
+                    });
                 }
-            } else if (element.isJsonObject()) {
-                saveSourceToDb(db, element.getAsJsonObject());
-                count++;
             }
-            db.close();
-            Toast.makeText(this, "成功导入 " + count + " 个图源！", Toast.LENGTH_SHORT).show();
-        } catch (Exception e) {
-            Toast.makeText(this, "图源解析失败，格式有误", Toast.LENGTH_SHORT).show();
+        }).start();
+    }
+
+    // 核心自动解压引擎：处理异次元 eNr... (Base64+Zlib) 及 Gzip 格式
+    private String tryDecompress(String raw) {
+        if (raw == null) return "";
+        String text = raw.trim();
+        if (text.startsWith("{") || text.startsWith("[")) {
+            return text;
         }
+
+        try {
+            byte[] data = Base64.decode(text, Base64.DEFAULT);
+
+            // 1. 解压标准 ZLIB / Deflate（异次元专有格式）
+            try {
+                ByteArrayInputStream bais = new ByteArrayInputStream(data);
+                InflaterInputStream iis = new InflaterInputStream(bais);
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                byte[] buffer = new byte[2048];
+                int len;
+                while ((len = iis.read(buffer)) != -1) {
+                    baos.write(buffer, 0, len);
+                }
+                iis.close();
+                String decomp = baos.toString("UTF-8");
+                if (decomp.trim().startsWith("{") || decomp.trim().startsWith("[")) {
+                    return decomp;
+                }
+            } catch (Exception ignored) {}
+
+            // 2. 解压 GZIP
+            try {
+                ByteArrayInputStream bais = new ByteArrayInputStream(data);
+                GZIPInputStream gis = new GZIPInputStream(bais);
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                byte[] buffer = new byte[2048];
+                int len;
+                while ((len = gis.read(buffer)) != -1) {
+                    baos.write(buffer, 0, len);
+                }
+                gis.close();
+                String decomp = baos.toString("UTF-8");
+                if (decomp.trim().startsWith("{") || decomp.trim().startsWith("[")) {
+                    return decomp;
+                }
+            } catch (Exception ignored) {}
+        } catch (Exception ignored) {}
+
+        return text;
+    }
+
+    // 异步解析并在 SQLite 事务中秒级批量入库
+    private void parseAndSaveSources(final String rawContent) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String jsonContent = tryDecompress(rawContent);
+                    JsonElement element = new JsonParser().parse(jsonContent);
+
+                    int count = 0;
+                    SQLiteDatabase db = dbHelper.getWritableDatabase();
+                    db.beginTransaction(); // 开启事务批量加速
+                    try {
+                        if (element.isJsonArray()) {
+                            JsonArray array = element.getAsJsonArray();
+                            for (JsonElement item : array) {
+                                if (item.isJsonObject()) {
+                                    saveSourceToDb(db, item.getAsJsonObject());
+                                    count++;
+                                }
+                            }
+                        } else if (element.isJsonObject()) {
+                            saveSourceToDb(db, element.getAsJsonObject());
+                            count++;
+                        }
+                        db.setTransactionSuccessful();
+                    } finally {
+                        db.endTransaction();
+                        db.close();
+                    }
+
+                    final int total = count;
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (total > 0) {
+                                Toast.makeText(MainActivity.this, "成功解析并导入 " + total + " 个图源！", Toast.LENGTH_LONG).show();
+                            } else {
+                                Toast.makeText(MainActivity.this, "未找到有效的图源规则，请检查内容", Toast.LENGTH_LONG).show();
+                            }
+                        }
+                    });
+                } catch (final Exception e) {
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            Toast.makeText(MainActivity.this, "图源解析失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        }
+                    });
+                }
+            }
+        }).start();
     }
 
     private void saveSourceToDb(SQLiteDatabase db, JsonObject obj) {
@@ -210,6 +314,8 @@ public class MainActivity extends AppCompatActivity {
             name = obj.get("bookSourceName").getAsString();
         } else if (obj.has("bookSourceNamer")) {
             name = obj.get("bookSourceNamer").getAsString();
+        } else if (obj.has("name")) {
+            name = obj.get("name").getAsString();
         }
         ContentValues cv = new ContentValues();
         cv.put("name", name);
@@ -217,11 +323,10 @@ public class MainActivity extends AppCompatActivity {
         db.insert("sources", null, cv);
     }
 
-    // 多源全网搜索漫画
     private void searchComic(final String keyword) {
         searchResults.clear();
         adapter.notifyDataSetChanged();
-        Toast.makeText(this, "正在全网搜索，请稍候...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "正在检索图源中...", Toast.LENGTH_SHORT).show();
 
         new Thread(new Runnable() {
             @Override
@@ -232,7 +337,7 @@ public class MainActivity extends AppCompatActivity {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            Toast.makeText(MainActivity.this, "暂无图源，请先导入图源！", Toast.LENGTH_SHORT).show();
+                            Toast.makeText(MainActivity.this, "当前无图源，请先导入！", Toast.LENGTH_SHORT).show();
                         }
                     });
                     cursor.close();
@@ -249,14 +354,20 @@ public class MainActivity extends AppCompatActivity {
                         String baseUrl = source.has("bookSourceUrl") ? source.get("bookSourceUrl").getAsString() : "";
                         String searchUrl = source.has("searchUrl") ? source.get("searchUrl").getAsString() : "";
 
-                        if (TextUtils.isEmpty(baseUrl) || TextUtils.isEmpty(searchUrl)) continue;
+                        if (TextUtils.isEmpty(searchUrl)) continue;
 
                         String finalUrl;
                         String encodedKey = URLEncoder.encode(keyword, "UTF-8");
-                        if (searchUrl.contains("{{key}}")) {
-                            finalUrl = baseUrl + searchUrl.replace("{{key}}", encodedKey);
+                        if (searchUrl.startsWith("http://") || searchUrl.startsWith("https://")) {
+                            finalUrl = searchUrl;
                         } else {
-                            finalUrl = baseUrl + searchUrl + encodedKey;
+                            finalUrl = baseUrl + (searchUrl.startsWith("/") ? "" : "/") + searchUrl;
+                        }
+
+                        if (finalUrl.contains("{{key}}")) {
+                            finalUrl = finalUrl.replace("{{key}}", encodedKey);
+                        } else {
+                            finalUrl = finalUrl + encodedKey;
                         }
 
                         Request request = new Request.Builder()
@@ -268,7 +379,7 @@ public class MainActivity extends AppCompatActivity {
                         if (response.body() != null) {
                             Document doc = Jsoup.parse(response.body().string());
                             JsonObject ruleSearch = source.getAsJsonObject("ruleSearch");
-                            if (ruleSearch != null) {
+                            if (ruleSearch != null && ruleSearch.has("bookList")) {
                                 String listRule = ruleSearch.get("bookList").getAsString();
                                 String nameRule = ruleSearch.has("bookName") ? ruleSearch.get("bookName").getAsString() : "";
 
@@ -288,8 +399,7 @@ public class MainActivity extends AppCompatActivity {
                                 }
                             }
                         }
-                    } catch (Exception ignored) {
-                    }
+                    } catch (Exception ignored) {}
                 }
                 cursor.close();
                 db.close();
