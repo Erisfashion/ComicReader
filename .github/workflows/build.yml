@@ -24,13 +24,7 @@ jobs:
     - name: Ensure Minimal Resource Directory
       run: |
         mkdir -p app/src/main/res/values
-        if [ ! -f app/src/main/res/values/strings.xml ]; then
-          cat << 'EOF' > app/src/main/res/values/strings.xml
-          <resources>
-              <string name="app_name">异次元漫画</string>
-          </resources>
-          EOF
-        fi
+        echo '<resources><string name="app_name">异次元漫画</string></resources>' > app/src/main/res/values/strings.xml
 
     - name: Set up Gradle 6.5
       uses: gradle/actions/setup-gradle@v4
