@@ -15,11 +15,11 @@ jobs:
         distribution: 'temurin'
         java-version: '11'
 
-    - name: Accept Android SDK Licenses
+    - name: Accept All Android SDK Licenses
       run: |
         mkdir -p "$ANDROID_HOME/licenses" || true
-        echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> "$ANDROID_HOME/licenses/android-sdk-license"
-        echo "84831b9409646a918e30573bab4c9c91346d8abd" >> "$ANDROID_HOME/licenses/android-sdk-preview-license"
+        printf "89388d41e3fd83c984473fe0c5bf500f33429dd0\n24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479451eabf01fb78af6dfcb131a6481e\n" > "$ANDROID_HOME/licenses/android-sdk-license"
+        printf "84831b9409646a918e30573bab4c9c91346d8abd\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
 
     - name: Ensure Minimal Resource Directory
       run: |
