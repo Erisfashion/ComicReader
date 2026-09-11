@@ -15,10 +15,22 @@ jobs:
         distribution: 'temurin'
         java-version: '11'
 
-    - name: Install Android SDK Platform 28
+    - name: Accept Android SDK Licenses
       run: |
-        yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-        $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-28" "build-tools;28.0.3"
+        mkdir -p "$ANDROID_HOME/licenses" || true
+        echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> "$ANDROID_HOME/licenses/android-sdk-license"
+        echo "84831b9409646a918e30573bab4c9c91346d8abd" >> "$ANDROID_HOME/licenses/android-sdk-preview-license"
+
+    - name: Ensure Minimal Resource Directory
+      run: |
+        mkdir -p app/src/main/res/values
+        if [ ! -f app/src/main/res/values/strings.xml ]; then
+          cat << 'EOF' > app/src/main/res/values/strings.xml
+          <resources>
+              <string name="app_name">异次元漫画</string>
+          </resources>
+          EOF
+        fi
 
     - name: Set up Gradle 6.5
       uses: gradle/actions/setup-gradle@v4
@@ -27,10 +39,11 @@ jobs:
         validate-wrappers: false
 
     - name: Build Debug APK
-      run: gradle assembleDebug
+      run: gradle assembleDebug --stacktrace
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
+      if: success()
       with:
         name: comic-reader-x86-api17
         path: app/build/outputs/apk/debug/app-debug.apk
