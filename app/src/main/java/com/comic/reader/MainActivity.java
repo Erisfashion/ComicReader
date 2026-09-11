@@ -86,7 +86,7 @@ public class MainActivity extends AppCompatActivity {
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
-                                Toast.makeText(MainActivity.this, "网络请求与解析成功！元素数量: " + elements.size(), Toast.LONG).show();
+                                Toast.makeText(MainActivity.this, "网络请求与解析成功！元素数量: " + elements.size(), Toast.LENGTH_LONG).show();
                             }
                         });
                     }
