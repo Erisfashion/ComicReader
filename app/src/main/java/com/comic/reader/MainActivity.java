@@ -73,7 +73,6 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
 
         dbHelper = new DatabaseHelper(this);
-        // 初始化专门针对 Android 4.2.2 修复 TLS 1.2 和老证书过期的 OkHttp 实例
         client = buildTls12Client();
         displayList = new ArrayList<>();
 
@@ -106,7 +105,7 @@ public class MainActivity extends AppCompatActivity {
         searchBar.setOrientation(LinearLayout.HORIZONTAL);
 
         final EditText etKeyword = new EditText(this);
-        etKeyword.setHint("输入漫画名全网搜索...");
+        etKeyword.setHint("输入漫画名进行搜索...");
         etKeyword.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         Button btnSearch = new Button(this);
@@ -156,7 +155,6 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    // 解决 Android 4.2.2 访问现代 HTTPS 的 SSLHandshakeException 问题
     private OkHttpClient buildTls12Client() {
         try {
             TrustManager[] trustAllCerts = new TrustManager[]{
@@ -175,7 +173,7 @@ public class MainActivity extends AppCompatActivity {
                     .hostnameVerifier(new HostnameVerifier() {
                         public boolean verify(String hostname, SSLSession session) { return true; }
                     })
-                    .connectTimeout(5, TimeUnit.SECONDS)
+                    .connectTimeout(6, TimeUnit.SECONDS)
                     .readTimeout(8, TimeUnit.SECONDS)
                     .build();
         } catch (Exception e) {
@@ -188,7 +186,7 @@ public class MainActivity extends AppCompatActivity {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         Cursor cursor = db.rawQuery("SELECT name FROM sources", null);
         int total = cursor.getCount();
-        tvStatus.setText("已导入图源: " + total + " 个 (下方为图源列表)");
+        tvStatus.setText("已导入图源: " + total + " 个 (下方为站点列表)");
 
         while (cursor.moveToNext()) {
             displayList.add("📌 " + cursor.getString(0));
@@ -200,7 +198,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void showImportDialog() {
         final EditText input = new EditText(this);
-        input.setHint("可粘贴图源密文(eNr...)、JSON，或输入路径(/sdcard/Download/322.json)");
+        input.setHint("粘贴图源密文、JSON或输入路径(/sdcard/Download/322.json)");
         input.setMinLines(5);
 
         new AlertDialog.Builder(this)
@@ -226,7 +224,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void loadFromFile(final String filePath) {
-        Toast.makeText(this, "正在读取本地文件...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "正在读取文件...", Toast.LENGTH_SHORT).show();
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -254,7 +252,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void fetchAndSaveSourceFromUrl(final String url) {
-        Toast.makeText(this, "正在从网络拉取...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "正在从网络下载...", Toast.LENGTH_SHORT).show();
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -360,7 +358,7 @@ public class MainActivity extends AppCompatActivity {
                                 Toast.makeText(MainActivity.this, "成功导入 " + total + " 个图源！", Toast.LENGTH_SHORT).show();
                                 refreshSourceList();
                             } else {
-                                Toast.makeText(MainActivity.this, "未找到有效的图源规则", Toast.LENGTH_LONG).show();
+                                Toast.makeText(MainActivity.this, "未找到有效图源规则", Toast.LENGTH_LONG).show();
                             }
                         }
                     });
@@ -382,6 +380,8 @@ public class MainActivity extends AppCompatActivity {
             name = obj.get("bookSourceName").getAsString();
         } else if (obj.has("bookSourceNamer")) {
             name = obj.get("bookSourceNamer").getAsString();
+        } else if (obj.has("sourceName")) {
+            name = obj.get("sourceName").getAsString();
         } else if (obj.has("name")) {
             name = obj.get("name").getAsString();
         }
@@ -391,27 +391,40 @@ public class MainActivity extends AppCompatActivity {
         db.insert("sources", null, cv);
     }
 
-    // 异次元私有规则到 Jsoup CSS 选择器的转换器
+    // 异次元专有属性选择器转换，支持 class/id/tag/children 等结构转标准 CSS
     private String convertRuleToCss(String rule) {
         if (TextUtils.isEmpty(rule)) return "";
         String clean = rule;
-        if (clean.contains("@text")) clean = clean.replace("@text", "");
+        
+        // 剥离属性取值指令
+        if (clean.contains("@text")) clean = clean.substring(0, clean.indexOf("@text"));
         if (clean.contains("@href")) clean = clean.substring(0, clean.indexOf("@href"));
         if (clean.contains("@src")) clean = clean.substring(0, clean.indexOf("@src"));
 
         clean = clean.replace("class.", ".");
         clean = clean.replace("id.", "#");
         clean = clean.replace("tag.", "");
+        clean = clean.replace("children.", "> ");
         clean = clean.replace("@", " ").trim();
         return clean;
     }
 
-    // 10 线程并发搜索 + 结果实时瀑布流展示
+    // 从图源 JSON 中容错提取指定字段
+    private String optString(JsonObject obj, String... keys) {
+        for (String key : keys) {
+            if (obj.has(key) && !obj.get(key).isJsonNull()) {
+                String val = obj.get(key).getAsString();
+                if (!TextUtils.isEmpty(val)) return val;
+            }
+        }
+        return "";
+    }
+
     private void startConcurrentSearch(final String keyword) {
         if (searchExecutor != null && !searchExecutor.isShutdown()) {
             searchExecutor.shutdownNow();
         }
-        searchExecutor = Executors.newFixedThreadPool(10);
+        searchExecutor = Executors.newFixedThreadPool(8);
 
         displayList.clear();
         adapter.notifyDataSetChanged();
@@ -435,7 +448,7 @@ public class MainActivity extends AppCompatActivity {
         db.close();
 
         final AtomicInteger finishedCounter = new AtomicInteger(0);
-        tvStatus.setText("正在并发搜索中 (0/" + totalSources + ")... 找到结果将立即呈现");
+        tvStatus.setText("正在跨站搜索【" + keyword + "】(0/" + totalSources + ")...");
 
         for (final String[] item : sourceItems) {
             final String sourceName = item[0];
@@ -446,8 +459,11 @@ public class MainActivity extends AppCompatActivity {
                 public void run() {
                     try {
                         JsonObject source = new JsonParser().parse(jsonStr).getAsJsonObject();
-                        String baseUrl = source.has("bookSourceUrl") ? source.get("bookSourceUrl").getAsString() : "";
-                        String searchUrl = source.has("searchUrl") ? source.get("searchUrl").getAsString() : "";
+                        
+                        // 1. 全面容错获取 host / base 域名
+                        String baseUrl = optString(source, "bookSourceUrl", "sourceUrl", "host", "baseUrl", "url");
+                        // 2. 全面容错获取搜索路径与地址
+                        String searchUrl = optString(source, "searchUrl", "ruleSearchUrl");
 
                         if (!TextUtils.isEmpty(searchUrl)) {
                             String encodedKey = URLEncoder.encode(keyword, "UTF-8");
@@ -455,54 +471,76 @@ public class MainActivity extends AppCompatActivity {
                             if (searchUrl.startsWith("http://") || searchUrl.startsWith("https://")) {
                                 finalUrl = searchUrl;
                             } else {
-                                finalUrl = baseUrl + (searchUrl.startsWith("/") ? "" : "/") + searchUrl;
+                                if (!baseUrl.endsWith("/") && !searchUrl.startsWith("/")) {
+                                    finalUrl = baseUrl + "/" + searchUrl;
+                                } else {
+                                    finalUrl = baseUrl + searchUrl;
+                                }
                             }
 
                             if (finalUrl.contains("{{key}}")) {
                                 finalUrl = finalUrl.replace("{{key}}", encodedKey);
+                            } else if (finalUrl.contains("%s")) {
+                                finalUrl = finalUrl.replace("%s", encodedKey);
                             } else {
                                 finalUrl = finalUrl + encodedKey;
                             }
 
-                            Request request = new Request.Builder()
-                                    .url(finalUrl)
-                                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                                    .build();
+                            // 过滤掉拼出来仍不合法的非法 URL
+                            if (finalUrl.startsWith("http://") || finalUrl.startsWith("https://")) {
+                                Request request = new Request.Builder()
+                                        .url(finalUrl)
+                                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
+                                        .build();
 
-                            Response response = client.newCall(request).execute();
-                            if (response.body() != null) {
-                                String html = response.body().string();
-                                Document doc = Jsoup.parse(html);
-                                JsonObject ruleSearch = source.getAsJsonObject("ruleSearch");
+                                Response response = client.newCall(request).execute();
+                                if (response.isSuccessful() && response.body() != null) {
+                                    String html = response.body().string();
+                                    Document doc = Jsoup.parse(html);
 
-                                if (ruleSearch != null && ruleSearch.has("bookList")) {
-                                    String rawListRule = ruleSearch.get("bookList").getAsString();
-                                    String rawNameRule = ruleSearch.has("bookName") ? ruleSearch.get("bookName").getAsString() : "";
+                                    // 3. 兼容异次元新旧两代规则结构（根层级 / ruleSearch 嵌套）
+                                    String rawListRule = "";
+                                    String rawNameRule = "";
 
-                                    String cssList = convertRuleToCss(rawListRule);
-                                    String cssName = convertRuleToCss(rawNameRule);
+                                    if (source.has("ruleSearch") && source.get("ruleSearch").isJsonObject()) {
+                                        JsonObject ruleSearch = source.getAsJsonObject("ruleSearch");
+                                        rawListRule = optString(ruleSearch, "bookList", "itemList");
+                                        rawNameRule = optString(ruleSearch, "bookName", "name", "title");
+                                    }
+                                    if (TextUtils.isEmpty(rawListRule)) {
+                                        rawListRule = optString(source, "searchBookList", "bookList");
+                                        rawNameRule = optString(source, "searchBookName", "bookName");
+                                    }
 
-                                    Elements bookElements = doc.select(cssList);
-                                    for (Element bookElem : bookElements) {
-                                        String title = "";
-                                        if (!TextUtils.isEmpty(cssName)) {
-                                            Element nameElem = bookElem.select(cssName).first();
-                                            if (nameElem != null) title = nameElem.text();
-                                        }
-                                        if (TextUtils.isEmpty(title)) {
-                                            title = bookElem.text();
-                                        }
+                                    if (!TextUtils.isEmpty(rawListRule)) {
+                                        String cssList = convertRuleToCss(rawListRule);
+                                        String cssName = convertRuleToCss(rawNameRule);
 
-                                        // 过滤掉包含无关杂质的超长文本，保证漫画标题准确性
-                                        if (!TextUtils.isEmpty(title) && title.length() < 50) {
-                                            final String record = "📖 " + title.trim() + "  【" + sourceName + "】";
-                                            runOnUiThread(new Runnable() {
-                                                @Override
-                                                public void run() {
-                                                    displayList.add(record);
-                                                    adapter.notifyDataSetChanged();
+                                        Elements bookElements = doc.select(cssList);
+                                        for (Element bookElem : bookElements) {
+                                            String title = "";
+                                            if (!TextUtils.isEmpty(cssName)) {
+                                                Element nameElem = bookElem.select(cssName).first();
+                                                if (nameElem != null) title = nameElem.text();
+                                            }
+                                            if (TextUtils.isEmpty(title)) {
+                                                title = bookElem.text();
+                                            }
+
+                                            // 过滤纯换行与长于40字的无关标签文本，提取纯净书名
+                                            if (!TextUtils.isEmpty(title)) {
+                                                title = title.replaceAll("\\s+", " ").trim();
+                                                if (title.length() > 0 && title.length() < 40) {
+                                                    final String record = "📖 " + title + "  【" + sourceName + "】";
+                                                    runOnUiThread(new Runnable() {
+                                                        @Override
+                                                        public void run() {
+                                                            displayList.add(record);
+                                                            adapter.notifyDataSetChanged();
+                                                        }
+                                                    });
                                                 }
-                                            });
+                                            }
                                         }
                                     }
                                 }
@@ -511,7 +549,7 @@ public class MainActivity extends AppCompatActivity {
                     } catch (Exception ignored) {
                     } finally {
                         int finished = finishedCounter.incrementAndGet();
-                        final String statusStr = "搜索进度: (" + finished + "/" + totalSources + ") | 已检索到 " + displayList.size() + " 条结果";
+                        final String statusStr = "搜索中 (" + finished + "/" + totalSources + ") | 已找到 " + displayList.size() + " 条结果";
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
@@ -524,7 +562,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // TLS 1.2 Socket 套接字定制类，在旧版 Android 上启用高版本加密通道
     static class Tls12SocketFactory extends SSLSocketFactory {
         private final SSLSocketFactory delegate;
 
